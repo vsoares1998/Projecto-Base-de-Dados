@@ -2,7 +2,7 @@ USE guest;
 
 CREATE TABLE IF NOT EXISTS CLIENT
 (
-	Client_Id INT PRIMARY KEY AUTO_INCREMENT,
+	Client_Id INT(11) NOT NULL PRIMARY KEY AUTO_INCREMENT,
 	Name VARCHAR(128) NOT NULL,
 	Active VARCHAR(5) NOT NULL,
 	Email VARCHAR(50),
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS EXEMPLARY
 		Location_Shelf VARCHAR(15) NOT NULL,
 		Location_Stand VARCHAR(15) NOT NULL,
 		ISBN INT NOT NULL,
-		Available BIT NOT NULL
+		Available VARCHAR(5) NOT NULL
 
 	/*	FOREIGN KEY (ISBN) REFERENCES BOOK(ISBN) ON DELETE CASCADE*/
 );
@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS RENT
 	StaffId INT NOT NULL,
 	RentId INT AUTO_INCREMENT,
 	ClientId INT NOT NULL,
+	Fine DECIMAL(4,2),
 	Code INT NOT NULL,
 	PRIMARY KEY (RentId,ClientId,Code),
 	FOREIGN KEY (ClientId) REFERENCES CLIENT(Client_Id) ON UPDATE CASCADE,
@@ -98,6 +99,32 @@ END $
 DELIMITER ;
 */
 
+DROP FUNCTION IF EXISTS fine;
+DELIMITER $
+
+CREATE FUNCTION fine(Start_Date DATE,End_Date DATE)
+RETURNS DECIMAL(4,2)
+BEGIN
+	 DECLARE Fine DECIMAL(4,2);
+	 DECLARE DIASDECORRIDOS INT;
+	 SET Fine = 0.00;
+	 IF End_Date IS NULL THEN
+	 		SET End_Date = CURDATE();
+			SELECT (DATE(End_Date)-DATE(Start_Date)) INTO DIASDECORRIDOS;
+			IF DIASDECORRIDOS >= 15 THEN
+			  SET Fine = 1.0 + 0.15 * DIASDECORRIDOS;
+			  IF DIASDECORRIDOS >= 30 THEN
+			    SET Fine = Fine * 0.5;
+			    IF DIASDECORRIDOS >= 40 THEN
+			      SET Fine = Fine * 0.75;
+			    END IF;
+			  END IF;
+	    END IF;
+	END IF;
+	RETURN Fine;
+END $
+
+DELIMITER ;
 
 
 DROP PROCEDURE IF EXISTS AgeCalc;
@@ -130,6 +157,23 @@ CALL AgeCalc(1,'Pedro','Yes','tester@gmail.com','Portugal',NULL,'Porto','Avenida
 CALL AgeCalc(2,'Pedro','NO','tester@gmail.com','Portugal',NULL,'Porto','Avenida dos Aliados','1','M','1998-11-23',963850741,@Age);
 
 
+DROP PROCEDURE IF EXISTS InsertRent;
+DELIMITER $
+CREATE PROCEDURE InsertRent
+(IN Start_Date DATE,IN End_Date DATE,IN StaffId INT, IN RentId INT,
+IN clientId INT,IN Code INT,
+ OUT Fine INT)
+BEGIN
+
+  SET Fine = fine(Start_Date,End_Date);
+
+  INSERT INTO
+				RENT(Start_Date,End_Date,StaffId,ClientId,Fine,Code)
+  VALUES (Start_Date,End_Date,StaffId,clientId,Fine,Code);
+
+   -- SET client_Id = LAST_INSERT_ID();
+END $
+DELIMITER ;
 
 
 
@@ -137,9 +181,14 @@ CALL AgeCalc(2,'Pedro','NO','tester@gmail.com','Portugal',NULL,'Porto','Avenida 
 INSERT INTO
 			EXEMPLARY(Location_Shelf,Location_Stand,ISBN,Available)
 VALUES
-			('estante 1','partleira 2',12457892,1);
+			('estante 1','partleira 2',12457892,'YES');
 
+
+CALL InsertRent('2020-01-01',NULL,1,1,1,1,@Fine);
+
+
+/*
 INSERT INTO
 			RENT(Start_Date,End_Date,StaffId,ClientId,Code)
 VALUES
-			('1998-01-01',NULL,1,1,1);
+			('1998-01-01',NULL,1,1,1);*/
