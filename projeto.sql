@@ -109,18 +109,20 @@ BEGIN
 	 DECLARE DIASDECORRIDOS INT;
 	 SET Fine = 0.00;
 	 IF End_Date IS NULL THEN
-	 		SET End_Date = CURDATE();
-			SELECT (DATE(End_Date)-DATE(Start_Date)) INTO DIASDECORRIDOS;
+	 		-- SET End_Date = CURDATE();
+			SELECT DATEDIFF(CURDATE(),Start_Date) INTO DIASDECORRIDOS; -- FUNÇAO
+			-- DATE A DAR VALOR 500 OU SEJA VALOR ERRADO
 			IF DIASDECORRIDOS >= 15 THEN
 			  SET Fine = 1.0 + 0.15 * DIASDECORRIDOS;
 			  IF DIASDECORRIDOS >= 30 THEN
-			    SET Fine = Fine * 0.5;
+			    SET Fine = Fine * 1.5;
 			    IF DIASDECORRIDOS >= 40 THEN
-			      SET Fine = Fine * 0.75;
+			      SET Fine = Fine * 1.75;
 			    END IF;
 			  END IF;
 	    END IF;
 	END IF;
+
 	RETURN Fine;
 END $
 
