@@ -1,4 +1,8 @@
-USE guest;
+DROP DATABASE TESTER;
+
+CREATE DATABASE TESTER;
+
+USE TESTER;
 
 SET GLOBAL log_bin_trust_function_creators = 1;
 
@@ -27,11 +31,10 @@ CREATE TABLE IF NOT EXISTS PHONE
 
 CREATE TABLE IF NOT EXISTS BOOK
 (
-	Category VARCHAR(15) NOT NULL,
+
 	Title VARCHAR(25) NOT NULL,
 	Edition VARCHAR(25),
-	Author VARCHAR(25),
-	N_book INT,
+	N_Available INT,
 	ISBN INT PRIMARY KEY
 );
 
@@ -43,9 +46,46 @@ CREATE TABLE IF NOT EXISTS EXEMPLARY
 		Location_Stand VARCHAR(15) NOT NULL,
 		ISBN INT NOT NULL,
 		Available VARCHAR(5) NOT NULL,
-
+		DateIn DATE NOT NULL,
 	  FOREIGN KEY (ISBN) REFERENCES BOOK(ISBN) ON UPDATE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS CATEGORY
+(
+	CategoryId INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+	Name VARCHAR(25) NOT NULL,
+	FOREIGN KEY (CategoryId) REFERENCES BOOK(ISBN)
+);
+
+
+
+CREATE TABLE IF NOT EXISTS AUTHOR
+(
+	AuthorId INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+	Name VARCHAR(25),
+	Sex ENUM('M', 'F') NOT NULL,
+	Country VARCHAR(25)
+);
+
+CREATE TABLE IF NOT EXISTS WRITTEN
+(
+	Author INT NOT NULL,
+	Book INT NOT NULL,
+	PRIMARY KEY(Author,Book),
+	FOREIGN KEY (Author) REFERENCES AUTHOR(AuthorId),
+	FOREIGN KEY (Book) REFERENCES BOOK(ISBN)
+);
+
+
+CREATE TABLE  IF NOT EXISTS STAFF(
+  StaffId INT(11) NOT NULL AUTO_INCREMENT,
+  SupervisorId INT(11) DEFAULT NULL,
+  Job VARCHAR(32) NOT NULL,
+  Name VARCHAR(64) NOT NULL,
+  PRIMARY KEY (StaffId),
+  KEY Supervisor (SupervisorId),
+  CONSTRAINT staff_ibfk_1 FOREIGN KEY (SupervisorId) REFERENCES STAFF (StaffId)
+) ;
 
 
 CREATE TABLE IF NOT EXISTS HAVE
@@ -53,9 +93,7 @@ CREATE TABLE IF NOT EXISTS HAVE
 	ISBN INT NOT NULL,
 	Code INT NOT NULL,
 	DateIn DATE NOT NULL,
-	HaveId INT AUTO_INCREMENT,
-	PRIMARY KEY (HaveId,ISBN,Code),
-  FOREIGN KEY (ISBN) REFERENCES BOOK(ISBN) ON DELETE CASCADE,
+	PRIMARY KEY (Code),
 	FOREIGN KEY (Code) REFERENCES EXEMPLARY(Code) ON DELETE CASCADE
 );
 
@@ -65,11 +103,70 @@ DELIMITER $
 CREATE TRIGGER AfterAddEXEMPLARY
 AFTER INSERT ON EXEMPLARY FOR EACH ROW
 BEGIN
+	DECLARE n INT;
+	SET n = getBooks(NEW.ISBN);
+	UPDATE BOOK SET N_Available = n WHERE NEW.ISBN = ISBN;
 	INSERT INTO HAVE (ISBN,Code,DateIn)
 	VALUES (NEW.ISBN,NEW.Code,CURDATE());
+
 END $
 
 DELIMITER ;
+
+DROP TRIGGER IF EXISTS AfterAddEX;
+DELIMITER $
+
+CREATE TRIGGER AfterAddEX
+AFTER INSERT ON EXEMPLARY FOR EACH ROW
+BEGIN
+	DECLARE EXEMPLARYS BOOL;
+	DECLARE error CONDITION FOR SQLSTATE '99999';
+	SET EXEMPLARYS = TRUE;
+	SELECT FALSE INTO EXEMPLARYS FROM BOOK WHERE ISBN = NEW.ISBN;
+
+	IF EXEMPLARYS THEN
+					SIGNAL error SET MESSAGE_TEXT = 'Este Livro NÃO está registado';
+	END IF;
+END $
+
+DELIMITER ;
+
+/*
+DROP TRIGGER IF EXISTS BeforeUPEXEMPLARY;
+DELIMITER $
+
+CREATE TRIGGER BeforeUPEXEMPLARY
+BEFORE UPDATE ON EXEMPLARY FOR EACH ROW
+	BEGIN
+	DECLARE error CONDITION FOR SQLSTATE '99999';
+	DECLARE AV VARCHAR(5);
+	SELECT Available INTO AV FROM EXEMPLARY WHERE Code = NEW.Code;
+	IF AV LIKE NEW.Available THEN
+					SIGNAL error SET MESSAGE_TEXT = 'Este exemplar já se encontra neste estado';
+	END IF;
+
+END $
+
+DELIMITER ;
+
+*/
+DROP TRIGGER IF EXISTS BeforeUPBOOK;
+DELIMITER $
+
+CREATE TRIGGER BeforeUPBOOK
+BEFORE INSERT ON BOOK FOR EACH ROW
+	BEGIN
+		DECLARE BOOKS BOOL;
+		DECLARE error CONDITION FOR SQLSTATE '99999';
+		SET BOOKS = FALSE;
+		SELECT TRUE INTO BOOKS FROM BOOK WHERE ISBN = NEW.ISBN;
+		IF BOOKS THEN
+						SIGNAL error SET MESSAGE_TEXT = 'Este Livro já está registado';
+		END IF;
+	END $
+
+DELIMITER ;
+
 
 
 CREATE TABLE IF NOT EXISTS ADD_BOOK
@@ -78,23 +175,45 @@ CREATE TABLE IF NOT EXISTS ADD_BOOK
 	Code INT NOT NULL,
   Add_Day DATE NOT NULL,
  	PRIMARY KEY (StaffId,Code),
-  /*FOREIGN KEY (StaffId) REFERENCES STAFF(StaffId) ON UPDATE CASCADE,*/
+  FOREIGN KEY (StaffId) REFERENCES STAFF(StaffId) ON UPDATE CASCADE,
   FOREIGN KEY (Code) REFERENCES EXEMPLARY(Code) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS RENT
 (
 	Start_Date DATE NOT NULL,
-	End_Date DATE,
+	End_Date DATE DEFAULT NULL,
 	StaffId INT NOT NULL,
 	RentId INT AUTO_INCREMENT,
 	ClientId INT NOT NULL,
 	Fine DECIMAL(4,2),
-	Code INT NOT NULL,
-	PRIMARY KEY (RentId,ClientId,Code),
-	FOREIGN KEY (ClientId) REFERENCES CLIENT(Client_Id) ON UPDATE CASCADE,
-	FOREIGN KEY (Code) REFERENCES EXEMPLARY(Code) ON UPDATE CASCADE
+  Code INT NOT NULL,
+	ISBN INT NOT NULL,
+	PRIMARY KEY (RentId),
+	FOREIGN KEY (ISBN) REFERENCES BOOK(ISBN),
+  FOREIGN KEY (ClientId) REFERENCES CLIENT(Client_Id) ON UPDATE CASCADE,
+	FOREIGN KEY (Code) REFERENCES EXEMPLARY(Code) ON UPDATE CASCADE,
+	FOREIGN KEY (StaffId) REFERENCES STAFF(StaffId) ON UPDATE CASCADE
 );
+
+DROP TRIGGER IF EXISTS AfterAddRENT;
+DELIMITER $
+
+CREATE TRIGGER AfterAddRENT
+AFTER INSERT ON RENT FOR EACH ROW
+BEGIN
+	IF NEW.End_Date = NULL THEN
+		UPDATE EXEMPLARY SET Available = 'False' WHERE Code = NEW.Code;
+	END IF;
+
+	IF NEW.End_Date <> NULL THEN
+		UPDATE EXEMPLARY SET Available = 'True' WHERE Code = NEW.Code;
+	END IF;
+	UPDATE BOOK SET N_Available = getBooks(NEW.ISBN) WHERE ISBN = NEW.ISBN;
+END $
+
+DELIMITER ;
+
 
 
 
@@ -129,23 +248,6 @@ BEGIN
 END $
 DELIMITER ;
 
-/*DROP FUNCTION IF EXISTS setActive;
-DELIMITER $
-
-CREATE FUNCTION setActive(Active INT)
-RETURNS VARCHAR(5)
-BEGIN
-  DECLARE active VARCHAR(5);
-		IF Active = 0 THEN
-			SET active = "True";
-		END IF;
-		IF Active = 1 THEN
-			SET active = "False";
-		END IF;
-  RETURN active;
-END $
-DELIMITER ;
-*/
 
 DROP FUNCTION IF EXISTS fine;
 DELIMITER $
@@ -180,11 +282,11 @@ DELIMITER ;
 DROP FUNCTION IF EXISTS getBooks;
 DELIMITER $
 
-CREATE FUNCTION getBooks(ISBN INT)
+CREATE FUNCTION getBooks(ISBNS INT)
 RETURNS INT
 BEGIN
   DECLARE n INT;
-	SELECT count(*) from EXEMPLARY where ISBN LIKE ISBN INTO n;
+	SELECT count(*) from EXEMPLARY where ISBN LIKE ISBNS AND Available = 'True' INTO n;
   RETURN n;
 END $
 DELIMITER ;
@@ -192,19 +294,29 @@ DELIMITER ;
 DROP PROCEDURE IF EXISTS AddBook;
 DELIMITER $
 
+
+
+INSERT INTO
+			BOOK(Title,Edition,N_Available,ISBN)
+VALUES
+			('Dois Amores',' 3 edição',@getBooks,124578921),('Azul e Branco','2 edição',@getBooks,123456789),
+			('Dois Dragoes',' 2 edição',@getBooks,124578924),('Porto.','2 edição',@getBooks,123445841),
+			('Bola na Barra',' 1 edição',@getBooks,12997892),('Portugal e a Europa','2 edição',@getBooks,453456789),
+			('O Jornalismo',' 1 edição',@getBooks,12488892),('O Fim dos nossos Tempos','4 edição',@getBooks,145456789);
+
 CREATE PROCEDURE AddEXEMPLARY
-(IN Code INT,IN Location_Shelf VARCHAR(15),
+(IN Location_Shelf VARCHAR(15),
 IN Location_Stand VARCHAR(15),IN ISBN INT,IN Available VARCHAR(5),
-OUT N_book INT)
+OUT N_Available INT)
 
 BEGIN
 	DECLARE n INT;
 	SET n = getBooks(ISBN);
-	UPDATE BOOK SET N_book = n WHERE ISBN = ISBN;
+	UPDATE BOOK SET N_Available = n WHERE ISBN = ISBN;
 	INSERT INTO
-				EXEMPLARY(Location_Shelf,Location_Stand,ISBN,Available)
+				EXEMPLARY(Location_Shelf,Location_Stand,ISBN,Available,DateIn)
 	VALUES
-				('estante 12','partleira 22',12457892,'YES');
+				(Location_Shelf,Location_Stand,ISBN,Available,CURDATE());
 END $
 DELIMITER ;
 
@@ -212,57 +324,77 @@ DELIMITER ;
 DROP PROCEDURE IF EXISTS AgeCalc;
 DELIMITER $
 CREATE PROCEDURE AgeCalc
-(IN client_Id INT,IN Name VARCHAR(128),IN Active VARCHAR(5), IN Email VARCHAR(50),
+(IN Name VARCHAR(128),IN Active VARCHAR(5), IN Email VARCHAR(50),
 IN Country VARCHAR(30), IN Address_Flor VARCHAR(12),IN Address_Street VARCHAR(128) ,
 IN Address_City VARCHAR(30), IN Address_DoorN INT , IN Sex ENUM('M', 'F') , IN BirthDate DATE,IN Phone INT,
- OUT Age INT)
+ OUT Age INT,OUT client_Id INT)
 BEGIN
-  -- Obtém valor a cobrar usando função getChargeValue()
+  -- Obtém valor a cobrar usando função
   SET Age = getAge(BirthDate);
 
   -- Insere registo na tabela CLIENT.
   INSERT INTO
-				CLIENT(Client_Id,Name,Active,Email,Country,Address_Flor,Address_City,Address_Street,Address_DoorN,Sex,BirthDate,Age)
-  VALUES (client_Id,Name,active,Email,Country,Address_Flor,Address_City,Address_Street,Address_DoorN,Sex,BirthDate,Age);
-  -- Obtém id de registo inserido (função LAST_INSERT_ID)
+				CLIENT(Name,Active,Email,Country,Address_Flor,Address_City,Address_Street,Address_DoorN,Sex,BirthDate,Age)
+  VALUES (Name,active,Email,Country,Address_Flor,Address_City,Address_Street,Address_DoorN,Sex,BirthDate,Age);
+
+
+	-- Obtém id de registo inserido (função LAST_INSERT_ID)
+  SET client_Id = LAST_INSERT_ID();
 
 	INSERT INTO
 	       PHONE(Client_Id,Phone)
 	VALUES
 				(client_Id,Phone);
 
-  SET client_Id = LAST_INSERT_ID();
+
 END $
 DELIMITER ;
 
-CALL AgeCalc(1,'Pedro','Yes','tester@gmail.com','Portugal',NULL,'Porto','Avenida dos Aliados','1','M','1998-11-23',912458454,@Age);
-CALL AgeCalc(2,'Pedro','NO','tester@gmail.com','Portugal',NULL,'Porto','Avenida dos Aliados','1','M','1998-11-23',963850741,@Age);
+CALL AgeCalc('Pedro Pires','Yes','pedro1245@gmail.com','Portugal',NULL,'Porto','Avenida dos Aliados','1','M','1998-11-23',912458454,@Age,@client_Id);
+CALL AgeCalc('Luis Miguel','NO','lm23@gmail.com','Portugal',NULL,'Porto','Avenida dos Aliados','1','M','1999-12-3',963850741,@Age,@client_Id);
+CALL AgeCalc('Rui Pedro','NO','rp4894@gmail.com','Portugal',NULL,'Porto','Praça do Penta','1','M','1990-10-3',963450741,@Age,@client_Id);
+CALL AgeCalc('Luis Pinto','NO','lm23@gmail.com','Portugal',NULL,'Porto','Rua das Igrejas','1','M','1999-12-3',967850741,@Age,@client_Id);
+CALL AgeCalc('Luisa Soares','YES','aaasad23@gmail.com','Portugal',NULL,'Porto','Avenida dos Pontos','1','F','1999-10-3',963814741,@Age,@client_Id);
+CALL AgeCalc('João Pinto','NO','jp2458@gmail.com','Portugal',NULL,'Porto','Rua das lamentações ','1','M','1990-2-3',963854541,@Age,@client_Id);
+CALL AgeCalc('Sergio Conceição','YES','penta28@gmail.com','Portugal',NULL,'Porto','Avenida Dragão','1','F','2000-1-29',963878741,@Age,@client_Id);
 
 
 DROP PROCEDURE IF EXISTS InsertRent;
 DELIMITER $
 CREATE PROCEDURE InsertRent
-(IN Start_Date DATE,IN End_Date DATE,IN StaffId INT, IN RentId INT,
-IN clientId INT,IN Code INT,
+(IN Start_Date DATE,IN End_Date DATE,IN StaffId INT,
+IN clientId INT,IN Code INT, IN ISBN INT,
  OUT Fine DECIMAL(4,2))
 BEGIN
-
   SET Fine = fine(Start_Date,End_Date);
-
   INSERT INTO
-				RENT(Start_Date,End_Date,StaffId,ClientId,Fine,Code)
-  VALUES (Start_Date,End_Date,StaffId,clientId,Fine,Code);
-
-   -- SET client_Id = LAST_INSERT_ID();
+				RENT(Start_Date,End_Date,StaffId,ClientId,Fine,Code,ISBN)
+  VALUES (Start_Date,End_Date,StaffId,clientId,Fine,Code,ISBN);
 END $
 DELIMITER ;
 
 
-
 INSERT INTO
-			BOOK(Category,Title,Edition,Author,N_book,ISBN)
+			STAFF(SupervisorId,Job,Name)
 VALUES
-			('Categoria 1','Dois Amores',' 3 edição','jose',@getBooks,12457892);
+			(NULL,'Atendimento','José'),(1,'Director','Rui Pires');
+
+
+
+CALL AddEXEMPLARY('estante 34','partleira 45',124578921,'True',@getBooks);
+CALL AddEXEMPLARY('estante 4','partleira 45',123456789,'True',@getBooks);
+CALL AddEXEMPLARY('estante 4','partleira 45',124578924,'True',@getBooks);
+CALL AddEXEMPLARY('estante 4','partleira 45',123445841,'False',@getBooks);
+
+
+CALL InsertRent('2020-03-01',NULL,1,1,2,123456789,@Fine);
+CALL InsertRent('2020-01-01',NULL,1,2,3,124578924,@Fine);
+CALL InsertRent('2020-01-05','2020-05-01',1,1,4,123445841,@Fine);
+CALL InsertRent('2020-05-01','2020-05-11',1,2,1,123456789,@Fine);
+CALL InsertRent('2020-07-06',NULL,1,1,3,124578924,@Fine);
+CALL InsertRent('2020-10-11','2019-07-06',1,2,3,124578924,@Fine);
+
+
 /*
 INSERT INTO
 			EXEMPLARY(Location_Shelf,Location_Stand,ISBN,Available)
@@ -271,9 +403,6 @@ VALUES
 
 
 
-
-CALL AddEXEMPLARY(1,'estante 34','partleira 45',12457892,'Yes',@getBooks);
-CALL InsertRent('2020-01-01',NULL,1,1,1,1,@Fine);
 
 /*
 INSERT INTO
